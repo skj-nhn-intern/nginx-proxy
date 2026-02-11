@@ -1,0 +1,275 @@
+name: Build and Test nginx-proxy Instance Image
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      skip_cleanup:
+        description: 'Skip resource cleanup (for debugging)'
+        required: false
+        default: 'false'
+
+env:
+  PROMTAIL_VERSION: '3.6.4'
+  NODE_EXPORTER_VERSION: '1.10.0'
+  NGINX_EXPORTER_VERSION: '0.11.0'
+
+jobs:
+  build-and-create-image:
+    name: Build and create nginx-proxy image (KR1)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Set KR1 for build and test
+        run: |
+          echo "NHN_REGION=KR1" >> $GITHUB_ENV
+          if [ -n "${{ secrets.NHN_NETWORK_ID_KR1 }}" ]; then
+            echo "NHN_NETWORK_ID=${{ secrets.NHN_NETWORK_ID_KR1 }}" >> $GITHUB_ENV
+          else
+            echo "NHN_NETWORK_ID=${{ secrets.NHN_NETWORK_ID }}" >> $GITHUB_ENV
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python (for CI scripts)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install NHN Cloud CLI dependencies
+        run: pip install --upgrade pip && pip install requests
+
+      - name: Create temporary SSH key
+        id: ssh_key
+        run: |
+          ssh-keygen -t rsa -b 4096 -f ~/.ssh/nhn_temp_key -N "" -C "github-actions-temp"
+          echo "private_key_path=$HOME/.ssh/nhn_temp_key" >> $GITHUB_OUTPUT
+          echo "public_key_path=$HOME/.ssh/nhn_temp_key.pub" >> $GITHUB_OUTPUT
+          chmod 600 ~/.ssh/nhn_temp_key
+
+      - name: Create build instance on NHN Cloud
+        id: create_instance
+        env:
+          NHN_AUTH_URL: ${{ secrets.NHN_AUTH_URL }}
+          NHN_TENANT_ID: ${{ secrets.NHN_TENANT_ID }}
+          NHN_USERNAME: ${{ secrets.NHN_USERNAME }}
+          NHN_PASSWORD: ${{ secrets.NHN_PASSWORD }}
+          NHN_FLAVOR_NAME: ${{ secrets.NHN_FLAVOR_NAME }}
+          NHN_IMAGE_NAME: ${{ secrets.NHN_IMAGE_NAME }}
+          NHN_SECURITY_GROUP_ID: ${{ secrets.NHN_SECURITY_GROUP_ID }}
+          NHN_FLOATING_IP_POOL: ${{ secrets.NHN_FLOATING_IP_POOL }}
+          NHN_NETWORK_ID: ${{ env.NHN_NETWORK_ID }}
+          NHN_REGION: ${{ env.NHN_REGION }}
+          SSH_PUBLIC_KEY: ${{ steps.ssh_key.outputs.public_key_path }}
+        run: python3 scripts/ci/create_build_instance.py
+
+      - name: Wait for SSH to be ready
+        run: |
+          max_attempts=30
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+                -i ${{ steps.ssh_key.outputs.private_key_path }} \
+                ubuntu@${{ steps.create_instance.outputs.instance_ip }} \
+                "echo 'SSH OK'" 2>/dev/null; then
+              echo "✅ SSH 연결 가능"
+              break
+            fi
+            attempt=$((attempt + 1))
+            echo "  시도 $attempt/$max_attempts..."
+            sleep 10
+          done
+          if [ $attempt -eq $max_attempts ]; then echo "❌ SSH 실패"; exit 1; fi
+
+      - name: Upload nginx-proxy source to build instance
+        run: |
+          rsync -avz --exclude='.git' --exclude='*.md' \
+            -e "ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }}" \
+            ./ ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/
+          echo "BACKEND_UPSTREAM=\"127.0.0.1:8000\"" | \
+            ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }} \
+            ubuntu@${{ steps.create_instance.outputs.instance_ip }} "cat > /tmp/nginx-proxy/.env"
+          echo "✅ 소스 업로드 완료"
+
+      - name: Download offline packages (Promtail, node_exporter, nginx-exporter)
+        run: |
+          mkdir -p offline-packages
+          echo "📥 Promtail..."
+          curl -sSL -o offline-packages/promtail.zip \
+            "https://github.com/grafana/loki/releases/download/v${PROMTAIL_VERSION}/promtail-linux-amd64.zip"
+          echo "📥 node_exporter..."
+          curl -sSL -o offline-packages/node_exporter.tar.gz \
+            "https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz"
+          echo "📥 nginx-prometheus-exporter..."
+          curl -sSL -o offline-packages/nginx-exporter.tar.gz \
+            "https://github.com/nginxinc/nginx-prometheus-exporter/releases/download/v${NGINX_EXPORTER_VERSION}/nginx-prometheus-exporter_${NGINX_EXPORTER_VERSION}_linux_amd64.tar.gz"
+          echo "✅ 오프라인 패키지 다운로드 완료"
+
+      - name: Upload offline packages to build instance
+        run: |
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }}" \
+            offline-packages/ ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/offline-packages/
+          echo "✅ 오프라인 패키지 업로드 완료"
+
+      - name: Build nginx-proxy image on instance
+        run: |
+          ssh -o StrictHostKeyChecking=no \
+            -i ${{ steps.ssh_key.outputs.private_key_path }} \
+            ubuntu@${{ steps.create_instance.outputs.instance_ip }} << 'REMOTE_SCRIPT'
+          set -euo pipefail
+
+          echo "=== nginx 설치 및 트래픽 효율 설정 ==="
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx curl
+          sudo sed -i 's/worker_connections [0-9]*/worker_connections 65535/' /etc/nginx/nginx.conf 2>/dev/null || true
+          grep -q 'worker_processes auto' /etc/nginx/nginx.conf 2>/dev/null || sudo sed -i 's/worker_processes [^;]*/worker_processes auto/' /etc/nginx/nginx.conf 2>/dev/null || true
+
+          echo "=== /opt/nginx-proxy 배치 ==="
+          sudo mkdir -p /opt/nginx-proxy/conf /opt/nginx-proxy/conf.d /opt/nginx-proxy/deploy /opt/nginx-proxy/scripts
+          sudo rsync -a /tmp/nginx-proxy/conf/ /opt/nginx-proxy/conf/
+          sudo rsync -a /tmp/nginx-proxy/deploy/ /opt/nginx-proxy/deploy/
+          sudo rsync -a /tmp/nginx-proxy/scripts/ /opt/nginx-proxy/scripts/ 2>/dev/null || true
+          sudo chmod +x /opt/nginx-proxy/deploy/*.sh /opt/nginx-proxy/scripts/*.sh 2>/dev/null || true
+
+          echo "=== backend.upstream.conf 생성 ==="
+          sed "s|__BACKEND_UPSTREAM__|127.0.0.1:8000|g" \
+            /opt/nginx-proxy/conf/backend.upstream.conf.template | \
+            sudo tee /opt/nginx-proxy/conf.d/backend.upstream.conf > /dev/null
+
+          echo "=== nginx 설정 적용 ==="
+          sudo cp /opt/nginx-proxy/conf/nginx-proxy.conf /etc/nginx/conf.d/nginx-proxy.conf
+          sudo rm -f /etc/nginx/sites-enabled/default
+          sudo nginx -t
+
+          echo "=== Promtail (Loki) ==="
+          sudo mkdir -p /opt/promtail /var/lib/promtail
+          unzip -q /tmp/offline-packages/promtail.zip -d /tmp/
+          sudo mv /tmp/promtail-linux-amd64 /opt/promtail/promtail 2>/dev/null || sudo mv /tmp/promtail /opt/promtail/promtail
+          sudo chmod +x /opt/promtail/promtail
+          sudo cp /opt/nginx-proxy/conf/promtail-config.yaml /opt/promtail/promtail-config.yaml
+          sudo cp /opt/nginx-proxy/conf/promtail.service /etc/systemd/system/promtail.service
+
+          echo "=== node_exporter ==="
+          sudo useradd -r -s /usr/sbin/nologin -d /opt/node_exporter node-exporter 2>/dev/null || true
+          sudo mkdir -p /opt/node_exporter
+          sudo tar -xzf /tmp/offline-packages/node_exporter.tar.gz -C /tmp/
+          sudo mv /tmp/node_exporter-*.linux-amd64/node_exporter /opt/node_exporter/
+          sudo rm -rf /tmp/node_exporter-*.linux-amd64
+          sudo chown -R node-exporter:node-exporter /opt/node_exporter
+          sudo cp /opt/nginx-proxy/conf/node_exporter.service /etc/systemd/system/node_exporter.service
+
+          echo "=== nginx-prometheus-exporter ==="
+          sudo useradd -r -s /usr/sbin/nologin -d /opt/nginx-exporter nginx-exporter 2>/dev/null || true
+          sudo mkdir -p /opt/nginx-exporter
+          sudo tar -xzf /tmp/offline-packages/nginx-exporter.tar.gz -C /tmp/
+          if [ -f /tmp/nginx-prometheus-exporter ]; then
+            sudo mv /tmp/nginx-prometheus-exporter /opt/nginx-exporter/
+          else
+            sudo mv /tmp/nginx-prometheus-exporter_*_linux_amd64/nginx-prometheus-exporter /opt/nginx-exporter/ 2>/dev/null || true
+          fi
+          sudo chown -R nginx-exporter:nginx-exporter /opt/nginx-exporter
+          sudo chmod +x /opt/nginx-exporter/nginx-prometheus-exporter 2>/dev/null || true
+          sudo cp /opt/nginx-proxy/conf/nginx-exporter.service /etc/systemd/system/nginx-exporter.service
+
+          echo "=== Pushgateway 푸시 ==="
+          sudo cp /opt/nginx-proxy/conf/pushgateway-push.service /etc/systemd/system/
+          sudo cp /opt/nginx-proxy/conf/pushgateway-push.timer /etc/systemd/system/
+
+          sudo cp /tmp/nginx-proxy/.env /opt/nginx-proxy/.env 2>/dev/null || true
+          sudo systemctl daemon-reload
+          sudo systemctl enable nginx promtail node_exporter nginx-exporter pushgateway-push.timer
+          sudo systemctl start nginx node_exporter nginx-exporter
+          sudo systemctl start pushgateway-push.timer 2>/dev/null || true
+          [ -n "$(grep -E '^LOKI_URL=' /opt/nginx-proxy/.env 2>/dev/null | cut -d= -f2)" ] && sudo systemctl start promtail 2>/dev/null || true
+
+          sudo rm -rf /tmp/nginx-proxy /tmp/offline-packages /tmp/promtail-linux-amd64
+          echo "✅ nginx-proxy 이미지 빌드 완료"
+          REMOTE_SCRIPT
+          echo "✅ 인스턴스 빌드 완료"
+
+      - name: Verify nginx before image creation
+        run: |
+          INSTANCE_IP="${{ steps.create_instance.outputs.instance_ip }}"
+          code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://${INSTANCE_IP}:80/health" || echo "000")
+          if [[ "$code" == "200" ]]; then
+            echo "✅ /health 200"
+          elif [[ "$code" == "502" || "$code" == "503" ]]; then
+            echo "✅ /health $code (nginx 동작 중)"
+          else
+            echo "❌ /health HTTP $code"; exit 1
+          fi
+
+      - name: Stop instance before creating image
+        env:
+          TOKEN: ${{ steps.create_instance.outputs.token }}
+          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
+          INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
+        run: python3 scripts/ci/stop_instance.py
+
+      - name: Create instance image
+        id: create_image
+        env:
+          TOKEN: ${{ steps.create_instance.outputs.token }}
+          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
+          VOLUME_URL: ${{ steps.create_instance.outputs.volume_url }}
+          INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
+          GIT_SHA: ${{ github.sha }}
+        run: python3 scripts/ci/create_image.py
+
+      - name: Create test instance from image
+        id: test_instance
+        env:
+          TOKEN: ${{ steps.create_instance.outputs.token }}
+          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
+          IMAGE_ID: ${{ steps.create_image.outputs.image_id }}
+          NHN_NETWORK_ID: ${{ env.NHN_NETWORK_ID }}
+          NHN_FLAVOR_NAME: ${{ secrets.NHN_FLAVOR_NAME }}
+          NHN_SECURITY_GROUP_ID: ${{ secrets.NHN_SECURITY_GROUP_ID }}
+          NHN_FLOATING_IP_POOL: ${{ secrets.NHN_FLOATING_IP_POOL }}
+          KEYPAIR_NAME: ${{ steps.create_instance.outputs.keypair_name }}
+        run: python3 scripts/ci/create_test_instance.py
+
+      - name: Wait for test instance
+        run: sleep 45
+
+      - name: Test image with curl
+        run: |
+          max_attempts=20
+          attempt=0
+          while [ $attempt -lt $max_attempts ]; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
+              "http://${{ steps.test_instance.outputs.test_instance_ip }}:80/health" || echo "000")
+            if [[ "$code" == "200" || "$code" == "502" || "$code" == "503" ]]; then
+              echo "✅ nginx 프록시 응답 HTTP $code"; exit 0
+            fi
+            attempt=$((attempt + 1)); echo "  시도 $attempt/$max_attempts: HTTP $code"; sleep 10
+          done
+          echo "❌ 테스트 실패"; exit 1
+
+      - name: Cleanup KR1 resources
+        if: always() && github.event.inputs.skip_cleanup != 'true'
+        env:
+          TOKEN: ${{ steps.create_instance.outputs.token }}
+          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
+          BUILD_INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
+          TEST_INSTANCE_ID: ${{ steps.test_instance.outputs.test_instance_id }}
+          BUILD_FLOATING_IP_ID: ${{ steps.create_instance.outputs.floating_ip_id }}
+          TEST_FLOATING_IP_ID: ${{ steps.test_instance.outputs.test_floating_ip_id }}
+          KEYPAIR_NAME: ${{ steps.create_instance.outputs.keypair_name }}
+        run: python3 scripts/ci/cleanup.py
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## nginx-proxy 이미지 빌드 요약" >> $GITHUB_STEP_SUMMARY
+          echo "| 이미지 이름 | ${{ steps.create_image.outputs.image_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| 이미지 ID | ${{ steps.create_image.outputs.image_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Git SHA | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
