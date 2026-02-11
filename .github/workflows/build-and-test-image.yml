@@ -128,7 +128,7 @@ jobs:
 
           echo "=== nginx 설치 및 트래픽 효율 설정 ==="
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx curl
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nginx curl unzip
           sudo sed -i 's/worker_connections [0-9]*/worker_connections 65535/' /etc/nginx/nginx.conf 2>/dev/null || true
           grep -q 'worker_processes auto' /etc/nginx/nginx.conf 2>/dev/null || sudo sed -i 's/worker_processes [^;]*/worker_processes auto/' /etc/nginx/nginx.conf 2>/dev/null || true
 
@@ -206,6 +206,13 @@ jobs:
           else
             echo "❌ /health HTTP $code"; exit 1
           fi
+
+      - name: Prepare image for first-boot SSH (cloud-init clean)
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }} \
+            ubuntu@${{ steps.create_instance.outputs.instance_ip }} \
+            "sudo cloud-init clean && sudo sync"
+          echo "✅ cloud-init 상태 초기화 완료 → 이 이미지로 띄운 인스턴스는 첫 부팅 시 cloud-init이 실행되어 SSH 키가 주입됩니다."
 
       - name: Stop instance before creating image
         env:

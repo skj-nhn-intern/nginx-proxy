@@ -34,6 +34,7 @@ nginx-proxy/                    ← 이 레포 루트
 - 워크플로: **`.github/workflows/build-and-test-image.yml`**
 - GitHub Actions에서 NHN Cloud 인스턴스 생성·이미지 빌드에 필요한 시크릿은 팀/운영에서 설정.
 - 생성 이미지 이름: `nginx-proxy-YYYYMMDD-HHMMSS`
+- **Bastion/SSH**: 이미지 생성 직전에 `cloud-init clean`을 실행해 두어, 이 이미지로 띄운 인스턴스가 첫 부팅 시 cloud-init을 다시 실행하고 NHN Cloud에서 지정한 SSH 키가 주입되도록 되어 있음. (이미지로 만든 VM에 SSH가 안 되면, 수동 이미지 생성 시에도 이미지 소스 VM에서 `sudo cloud-init clean` 후 중지·이미지 생성 권장)
 
 ## NHN Deploy
 
