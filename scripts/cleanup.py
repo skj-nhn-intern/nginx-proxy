@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-NHN Cloud 리소스 정리: nginx-proxy 빌드/테스트 인스턴스 삭제, Floating IP 해제, 키페어 삭제.
+NHN Cloud 리소스 정리: 빌드/테스트 인스턴스 삭제, Floating IP 해제, 키페어 삭제.
 환경 변수: TOKEN, COMPUTE_URL,
   BUILD_INSTANCE_ID(선택), TEST_INSTANCE_ID(선택),
   BUILD_FLOATING_IP_ID(선택), TEST_FLOATING_IP_ID(선택), KEYPAIR_NAME(선택)
+값이 비어 있으면 해당 리소스는 건너뜀.
 """
 import os
 import requests

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NHN Cloud에 nginx-proxy 빌드용 인스턴스를 생성하고 ACTIVE 될 때까지 대기.
+NHN Cloud에 빌드용 인스턴스를 생성하고 ACTIVE 될 때까지 대기.
 환경 변수로 입력받고, GITHUB_OUTPUT에 결과를 쓴다.
 """
 import os
@@ -43,6 +43,7 @@ def main() -> None:
     )
     headers = get_headers(token)
 
+    # 이름으로 넣은 경우 API에서 UUID로 조회 (Flavor / Image)
     flavor_id = resolve_flavor_uuid(compute_url, headers, flavor_id)
     image_id = resolve_image_uuid(region, token, image_id)
 
@@ -61,9 +62,12 @@ def main() -> None:
     except requests.exceptions.HTTPError as e:
         print(f"⚠️  키페어 등록 실패 (이미 존재할 수 있음): {e}")
 
+    # 루트 디스크 크기(GB). Linux 최소 10, 문서 예시 20
     root_volume_size = int(os.environ.get("NHN_ROOT_VOLUME_SIZE_GB", "20"))
-    instance_name = f"nginx-proxy-build-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    instance_name = f"photo-api-build-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     print(f"🚀 빌드 인스턴스 생성 중: {instance_name}")
+    # NHN Cloud API: block_device_mapping_v2 필수 (https://docs.nhncloud.com/ko/Compute/Instance/ko/public-api/)
+    # networks: 서브넷 ID는 "subnet" 키 사용 (문서 예시 및 GITHUB_ACTIONS_SETUP.md 기준)
     server_payload = {
         "server": {
             "name": instance_name,
@@ -73,7 +77,8 @@ def main() -> None:
             "key_name": keypair_name,
             "min_count": 1,
             "max_count": 1,
-            "metadata": {"purpose": "github-actions-build", "app": "nginx-proxy"},
+            "metadata": {"purpose": "github-actions-build", "app": "photo-api"},
+            # NHN: destination_type 은 반드시 "volume". (local 이면 인스턴스 생성 400)
             "block_device_mapping_v2": [
                 {
                     "source_type": "image",

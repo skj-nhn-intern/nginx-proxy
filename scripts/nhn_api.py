@@ -40,6 +40,7 @@ def allocate_floating_ip(
     pool = (pool or "").strip()
     if pool:
         return _allocate_floating_ip_with_pool(compute_url, headers, pool)
+    # 풀 목록 조회 시도 (Nova os-floating-ip-pools)
     try:
         r = requests.get(f"{compute_url}/os-floating-ip-pools", headers=headers)
         if r.ok:
@@ -50,6 +51,7 @@ def allocate_floating_ip(
                 return _allocate_floating_ip_with_pool(compute_url, headers, names[0])
     except Exception:
         pass
+    # 기본 풀 이름 순서대로 시도
     for candidate in _DEFAULT_FLOATING_IP_POOLS:
         try:
             return _allocate_floating_ip_with_pool(compute_url, headers, candidate)
@@ -79,7 +81,7 @@ def release_floating_ip(compute_url: str, headers: dict, floating_ip_id: str) ->
         headers=headers,
     )
     if r.status_code == 404:
-        return
+        return  # 이미 삭제됨
     r.raise_for_status()
 
 _UUID_RE = re.compile(
@@ -98,7 +100,7 @@ def get_token_and_compute_url(
     password: str,
     region: str,
 ) -> tuple[str, str, Optional[str]]:
-    """토큰 발급 후 Compute API URL 및 Volume(Block Storage) URL 반환."""
+    """토큰 발급 후 Compute API URL 및 Volume(Block Storage) URL 반환. volume_url은 없을 수 있음."""
     auth_payload = {
         "auth": {
             "tenantId": tenant_id,
@@ -164,7 +166,8 @@ def resolve_flavor_uuid(compute_url: str, headers: dict, flavor_ref: str) -> str
 
 
 def resolve_image_uuid(region: str, token: str, image_ref: str) -> str:
-    """image_ref가 UUID면 그대로, 아니면 이름으로 Public 이미지 조회해 UUID 반환."""
+    """image_ref가 UUID면 그대로, 아니면 이름으로 Public 이미지 조회해 UUID 반환.
+    동일 이름이 여러 개면 created_at 최신 순으로 하나 선택."""
     if _is_uuid(image_ref):
         return image_ref.strip()
     region_lower = region.strip().lower()
@@ -190,8 +193,9 @@ def resolve_image_uuid(region: str, token: str, image_ref: str) -> str:
     if not candidates:
         print(f"❌ 이미지를 찾을 수 없음: {image_ref}", file=sys.stderr)
         sys.exit(1)
+    # 여러 개면 created_at 최신 순 (없으면 맨 뒤)
     candidates.sort(key=lambda img: img.get("created_at") or "", reverse=True)
     chosen = candidates[0]
     if len(candidates) > 1:
-        print(f"ℹ️  이미지 이름 '{image_ref}' 후보 {len(candidates)}개 중 최신 사용: {chosen['id']}")
+        print(f"ℹ️  이미지 이름 '{image_ref}' 후보 {len(candidates)}개 중 최신 사용: {chosen['id']} (created_at={chosen.get('created_at', '?')})")
     return chosen["id"]

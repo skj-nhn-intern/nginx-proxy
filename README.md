@@ -1,40 +1,95 @@
-# nginx-proxy
+# nginx-proxy (프론트 + 프록시 통합)
 
-백엔드 API(photo-api 등) 앞단 **리버스 프록시** 서비스입니다. 추후 백엔드 API 로드밸런서 IP를 백엔드로 사용할 예정이며, **클라이언트 IP 추적**이 필수이고 **SSL**은 추후 추가 예정입니다.
+**프론트엔드 정적(SPA) 서빙** + 백엔드 API(photo-api 등) 앞단 **리버스 프록시** 통합 서비스입니다.
+
+이 레포에는:
+- **React 프론트엔드** (`frontend/`): 사진 앨범 공유 웹 애플리케이션
+- **nginx 프록시 설정** (`conf/`, `deploy/`): 리버스 프록시 + 정적 서빙
+- **Observability** (`conf/*.service`, `scripts/`): Promtail, node-exporter, nginx-exporter, Pushgateway
+
+이미지 빌드 시 `frontend`를 빌드해 `/opt/nginx-proxy/static`에 넣고 루트(/)에서 서빙합니다.
 
 ## 역할
 
+- **/** → 프론트엔드 정적 (SPA, `try_files` → `/index.html`)
 - **/api/** → 백엔드로 prefix 제거 후 전달 (`/api/auth/login` → `/auth/login`)
 - **/share/** → photo-api 공유 링크 (인증 없이 앨범 공유)
 - **/health** → 백엔드 헬스체크
-- **/** → 기타 백엔드 루트
 - **클라이언트 IP**: `X-Forwarded-For`, `X-Real-IP` 등으로 무조건 전달
 
 ## 디렉터리 구조
 
 ```
-nginx-proxy/                    ← 이 레포 루트
+nginx-proxy/                    ← 이 레포 루트 (프론트 + 프록시 통합)
 ├── .github/workflows/
-│   └── build-and-test-image.yml   # 이미지 빌드 워크플로 (여기만 사용)
+│   └── build-and-test-image.yml   # 인스턴스 이미지 자동 빌드
+├── frontend/                      # React 프론트엔드 (SPA)
+│   ├── src/
+│   ├── scripts/
+│   │   └── deploy-to-nginx-proxy.sh
+│   ├── package.json
+│   ├── DEPLOY.md
+│   └── README.md
 ├── conf/
 │   ├── nginx-proxy.conf
 │   ├── backend.upstream.conf.template
-│   └── env.example
+│   ├── promtail-config.yaml
+│   └── *.service
 ├── deploy/
-│   ├── apply-env-and-restart.sh
+│   ├── apply-env-and-restart.sh   # NHN Deploy User Command
 │   ├── verify-after-deploy.sh
 │   └── README.md
-├── scripts/ci/
-│   └── ...
-└── ...
+├── scripts/
+│   ├── ci/                        # GitHub Actions CI 스크립트
+│   └── push-metrics-to-gateway.sh
+└── README.md
 ```
 
-## 인스턴스 이미지 빌드 (GitHub Actions)
+## 인스턴스 이미지 자동 빌드 (GitHub Actions)
 
-- 워크플로: **`.github/workflows/build-and-test-image.yml`**
-- GitHub Actions에서 NHN Cloud 인스턴스 생성·이미지 빌드에 필요한 시크릿은 팀/운영에서 설정.
-- 생성 이미지 이름: `nginx-proxy-YYYYMMDD-HHMMSS`
-- **Bastion/SSH**: 이미지 생성 직전에 `cloud-init clean`을 실행해 두어, 이 이미지로 띄운 인스턴스가 첫 부팅 시 cloud-init을 다시 실행하고 NHN Cloud에서 지정한 SSH 키가 주입되도록 되어 있음. (이미지로 만든 VM에 SSH가 안 되면, 수동 이미지 생성 시에도 이미지 소스 VM에서 `sudo cloud-init clean` 후 중지·이미지 생성 권장)
+**워크플로**: `.github/workflows/build-and-test-image.yml`
+
+### 동작 흐름
+
+1. **frontend 빌드** (Node.js)
+   - 레포의 `frontend/` 디렉터리를 `npm ci && npm run build` (VITE_API_BASE_URL=/api)
+   - `frontend/dist/` → 인스턴스의 `/opt/nginx-proxy/static/`에 복사
+   - frontend가 없으면 placeholder HTML 사용
+
+2. **NHN Cloud 인스턴스 생성** (Python CI 스크립트)
+   - Ubuntu 베이스 인스턴스 생성 (KR1)
+   - SSH 키 임시 생성 후 접속
+
+3. **nginx-proxy 설정**
+   - nginx 설치 + 트래픽 효율 설정 (`worker_connections 65535`, `worker_processes auto`)
+   - `/opt/nginx-proxy/` 배치: conf, deploy, scripts, static
+   - `backend.upstream.conf` 생성 (기본값: 127.0.0.1:8000)
+   - nginx 설정 적용 + 검증
+
+4. **Observability 구성**
+   - **Promtail**: nginx access/error 로그 → Loki (LOKI_URL 설정 시)
+   - **node_exporter**: 호스트 리소스 메트릭 (9100)
+   - **nginx-prometheus-exporter**: nginx stub_status 메트릭 (9113)
+   - **pushgateway-push.timer**: 30초마다 node + nginx 메트릭 푸시 (PROMETHEUS_PUSHGATEWAY_URL 설정 시)
+
+5. **이미지 생성**
+   - `cloud-init clean` 후 인스턴스 중지
+   - 이미지 생성: `nginx-proxy-YYYYMMDD-HHMMSS`
+   - 리소스 정리
+
+### 필수 GitHub Secrets
+
+| Secret | 설명 |
+|--------|------|
+| `NHN_AUTH_URL` | NHN Cloud Identity URL |
+| `NHN_TENANT_ID` | 테넌트 ID |
+| `NHN_USERNAME` | API 사용자 |
+| `NHN_PASSWORD` | API 비밀번호 |
+| `NHN_FLAVOR_NAME` | 인스턴스 타입 (예: `m2.c2m4`) |
+| `NHN_IMAGE_NAME` | 베이스 이미지 (예: `Ubuntu Server 22.04.3 LTS`) |
+| `NHN_SECURITY_GROUP_ID` | 보안 그룹 ID |
+| `NHN_FLOATING_IP_POOL` | 플로팅 IP 풀 |
+| `NHN_NETWORK_ID_KR1` | KR1 네트워크 ID (선택) |
 
 ## NHN Deploy
 

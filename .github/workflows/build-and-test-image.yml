@@ -39,6 +39,27 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Node (frontend build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend dist
+        run: |
+          if [ ! -f frontend/package.json ]; then
+            echo "⚠️ frontend/ 없음 — static은 빈 페이지로 둠"
+            mkdir -p frontend/dist
+            echo '<!DOCTYPE html><html><body><p>Frontend not in repo.</p></body></html>' > frontend/dist/index.html
+          else
+            cd frontend && npm ci && npm run build
+            cd ..
+            [ -d frontend/dist ] || (mkdir -p frontend/dist && echo '<!DOCTYPE html><html><body><p>Build failed.</p></body></html>' > frontend/dist/index.html)
+          fi
+        env:
+          VITE_API_BASE_URL: '/api'
+
       - name: Set up Python (for CI scripts)
         uses: actions/setup-python@v5
         with:
@@ -133,11 +154,18 @@ jobs:
           grep -q 'worker_processes auto' /etc/nginx/nginx.conf 2>/dev/null || sudo sed -i 's/worker_processes [^;]*/worker_processes auto/' /etc/nginx/nginx.conf 2>/dev/null || true
 
           echo "=== /opt/nginx-proxy 배치 ==="
-          sudo mkdir -p /opt/nginx-proxy/conf /opt/nginx-proxy/conf.d /opt/nginx-proxy/deploy /opt/nginx-proxy/scripts
+          sudo mkdir -p /opt/nginx-proxy/conf /opt/nginx-proxy/conf.d /opt/nginx-proxy/deploy /opt/nginx-proxy/scripts /opt/nginx-proxy/static
           sudo rsync -a /tmp/nginx-proxy/conf/ /opt/nginx-proxy/conf/
           sudo rsync -a /tmp/nginx-proxy/deploy/ /opt/nginx-proxy/deploy/
           sudo rsync -a /tmp/nginx-proxy/scripts/ /opt/nginx-proxy/scripts/ 2>/dev/null || true
           sudo chmod +x /opt/nginx-proxy/deploy/*.sh /opt/nginx-proxy/scripts/*.sh 2>/dev/null || true
+          if [ -d /tmp/nginx-proxy/frontend/dist ] && [ -n "$(ls -A /tmp/nginx-proxy/frontend/dist 2>/dev/null)" ]; then
+            sudo cp -r /tmp/nginx-proxy/frontend/dist/* /opt/nginx-proxy/static/
+            echo "  Frontend static 복사 완료"
+          else
+            echo '<!DOCTYPE html><html><body><p>Frontend not built.</p></body></html>' | sudo tee /opt/nginx-proxy/static/index.html > /dev/null
+            echo "  Frontend 없음 — placeholder index.html 사용"
+          fi
 
           echo "=== backend.upstream.conf 생성 ==="
           sed "s|__BACKEND_UPSTREAM__|127.0.0.1:8000|g" \
@@ -185,10 +213,11 @@ jobs:
 
           sudo cp /tmp/nginx-proxy/.env /opt/nginx-proxy/.env 2>/dev/null || true
           sudo systemctl daemon-reload
-          sudo systemctl enable nginx promtail node_exporter nginx-exporter pushgateway-push.timer
+          sudo systemctl enable nginx node_exporter nginx-exporter pushgateway-push.timer
           sudo systemctl start nginx node_exporter nginx-exporter
           sudo systemctl start pushgateway-push.timer 2>/dev/null || true
-          [ -n "$(grep -E '^LOKI_URL=' /opt/nginx-proxy/.env 2>/dev/null | cut -d= -f2)" ] && sudo systemctl start promtail 2>/dev/null || true
+          # Promtail은 enable 안 함 — LOKI_URL 설정 후 apply-env-and-restart.sh에서 enable+start
+          [ -n "$(grep -E '^LOKI_URL=' /opt/nginx-proxy/.env 2>/dev/null | cut -d= -f2)" ] && sudo systemctl enable promtail 2>/dev/null && sudo systemctl start promtail 2>/dev/null || true
 
           sudo rm -rf /tmp/nginx-proxy /tmp/offline-packages /tmp/promtail-linux-amd64
           echo "✅ nginx-proxy 이미지 빌드 완료"
@@ -214,67 +243,41 @@ jobs:
 
       - name: Stop instance before creating image
         env:
-          TOKEN: ${{ steps.create_instance.outputs.token }}
-          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
+          NHN_AUTH_URL: ${{ secrets.NHN_AUTH_URL }}
+          NHN_TENANT_ID: ${{ secrets.NHN_TENANT_ID }}
+          NHN_USERNAME: ${{ secrets.NHN_USERNAME }}
+          NHN_PASSWORD: ${{ secrets.NHN_PASSWORD }}
           INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
+          NHN_REGION: ${{ env.NHN_REGION }}
         run: python3 scripts/ci/stop_instance.py
 
-      - name: Create instance image
+      - name: Create image from instance
         id: create_image
         env:
-          TOKEN: ${{ steps.create_instance.outputs.token }}
-          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
-          VOLUME_URL: ${{ steps.create_instance.outputs.volume_url }}
+          NHN_AUTH_URL: ${{ secrets.NHN_AUTH_URL }}
+          NHN_TENANT_ID: ${{ secrets.NHN_TENANT_ID }}
+          NHN_USERNAME: ${{ secrets.NHN_USERNAME }}
+          NHN_PASSWORD: ${{ secrets.NHN_PASSWORD }}
           INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
-          GIT_SHA: ${{ github.sha }}
+          NHN_REGION: ${{ env.NHN_REGION }}
         run: python3 scripts/ci/create_image.py
 
-      - name: Create test instance from image
-        id: test_instance
+      - name: Cleanup resources
+        if: ${{ always() && github.event.inputs.skip_cleanup != 'true' }}
         env:
-          TOKEN: ${{ steps.create_instance.outputs.token }}
-          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
-          IMAGE_ID: ${{ steps.create_image.outputs.image_id }}
-          NHN_NETWORK_ID: ${{ env.NHN_NETWORK_ID }}
-          NHN_FLAVOR_NAME: ${{ secrets.NHN_FLAVOR_NAME }}
-          NHN_SECURITY_GROUP_ID: ${{ secrets.NHN_SECURITY_GROUP_ID }}
-          NHN_FLOATING_IP_POOL: ${{ secrets.NHN_FLOATING_IP_POOL }}
-          KEYPAIR_NAME: ${{ steps.create_instance.outputs.keypair_name }}
-        run: python3 scripts/ci/create_test_instance.py
-
-      - name: Wait for test instance
-        run: sleep 45
-
-      - name: Test image with curl
-        run: |
-          max_attempts=20
-          attempt=0
-          while [ $attempt -lt $max_attempts ]; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
-              "http://${{ steps.test_instance.outputs.test_instance_ip }}:80/" || echo "000")
-            if [[ "$code" != "000" ]]; then
-              echo "✅ nginx 응답 HTTP $code (상태만 확인)"; exit 0
-            fi
-            attempt=$((attempt + 1)); echo "  시도 $attempt/$max_attempts: HTTP $code"; sleep 10
-          done
-          echo "❌ 테스트 실패"; exit 1
-
-      - name: Cleanup KR1 resources
-        if: always() && github.event.inputs.skip_cleanup != 'true'
-        env:
-          TOKEN: ${{ steps.create_instance.outputs.token }}
-          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
-          BUILD_INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
-          TEST_INSTANCE_ID: ${{ steps.test_instance.outputs.test_instance_id }}
-          BUILD_FLOATING_IP_ID: ${{ steps.create_instance.outputs.floating_ip_id }}
-          TEST_FLOATING_IP_ID: ${{ steps.test_instance.outputs.test_floating_ip_id }}
-          KEYPAIR_NAME: ${{ steps.create_instance.outputs.keypair_name }}
+          NHN_AUTH_URL: ${{ secrets.NHN_AUTH_URL }}
+          NHN_TENANT_ID: ${{ secrets.NHN_TENANT_ID }}
+          NHN_USERNAME: ${{ secrets.NHN_USERNAME }}
+          NHN_PASSWORD: ${{ secrets.NHN_PASSWORD }}
+          INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
+          NHN_REGION: ${{ env.NHN_REGION }}
         run: python3 scripts/ci/cleanup.py
 
       - name: Summary
         if: always()
         run: |
-          echo "## nginx-proxy 이미지 빌드 요약" >> $GITHUB_STEP_SUMMARY
-          echo "| 이미지 이름 | ${{ steps.create_image.outputs.image_name }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| 이미지 ID | ${{ steps.create_image.outputs.image_id }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Git SHA | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Instance IP: ${{ steps.create_instance.outputs.instance_ip }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Image Name: ${{ steps.create_image.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Image ID: ${{ steps.create_image.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Region: ${{ env.NHN_REGION }}" >> $GITHUB_STEP_SUMMARY

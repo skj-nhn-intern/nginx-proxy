@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-생성된 nginx-proxy 이미지로 테스트 인스턴스를 띄우고 ACTIVE 될 때까지 대기.
+생성된 이미지로 테스트 인스턴스를 띄우고 ACTIVE 될 때까지 대기.
 환경 변수: TOKEN, COMPUTE_URL, IMAGE_ID, NHN_NETWORK_ID, NHN_FLAVOR_NAME,
-  NHN_SECURITY_GROUP_ID(선택), NHN_FLOATING_IP_POOL(선택), KEYPAIR_NAME
+  NHN_SECURITY_GROUP_ID(선택), KEYPAIR_NAME
 GITHUB_OUTPUT에 test_instance_id, test_instance_ip 기록.
 """
 import os
@@ -32,10 +32,12 @@ def main() -> None:
     floating_ip_pool = os.environ.get("NHN_FLOATING_IP_POOL", "").strip()
     headers = get_headers(token)
 
+    # Flavor는 이름(u2.c2m4 등)으로 넣어도 UUID로 자동 조회
     flavor_id = resolve_flavor_uuid(compute_url, headers, flavor_id)
 
     root_volume_size = int(os.environ.get("NHN_ROOT_VOLUME_SIZE_GB", "20"))
-    instance_name = f"nginx-proxy-test-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    instance_name = f"photo-api-test-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    # NHN: networks는 서브넷 ID일 때 "subnet" 키 사용
     server_payload = {
         "server": {
             "name": instance_name,
@@ -45,7 +47,7 @@ def main() -> None:
             "key_name": keypair_name,
             "min_count": 1,
             "max_count": 1,
-            "metadata": {"purpose": "github-actions-test", "app": "nginx-proxy"},
+            "metadata": {"purpose": "github-actions-test", "app": "photo-api"},
             "block_device_mapping_v2": [
                 {
                     "source_type": "image",
