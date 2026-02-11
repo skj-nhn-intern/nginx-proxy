@@ -255,6 +255,16 @@ jobs:
           INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
         run: python3 scripts/ci/create_image.py
 
+      - name: Copy image to KR2 (리전 전송)
+        id: copy_image
+        env:
+          TOKEN: ${{ steps.create_instance.outputs.token }}
+          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
+          SOURCE_IMAGE_ID: ${{ steps.create_image.outputs.image_id }}
+          SOURCE_IMAGE_NAME: ${{ steps.create_image.outputs.image_name }}
+          TARGET_REGION: KR2
+        run: python3 scripts/ci/copy_image_to_region.py
+
       - name: Cleanup resources
         if: ${{ always() && github.event.inputs.skip_cleanup != 'true' }}
         env:
@@ -270,6 +280,7 @@ jobs:
         run: |
           echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Instance IP: ${{ steps.create_instance.outputs.instance_ip }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Image Name: ${{ steps.create_image.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Image ID: ${{ steps.create_image.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Image Name (KR1): ${{ steps.create_image.outputs.image_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Image ID (KR1): ${{ steps.create_image.outputs.image_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Image ID (KR2 전송): ${{ steps.copy_image.outputs.target_image_id }}" >> $GITHUB_STEP_SUMMARY
           echo "- Region: ${{ env.NHN_REGION }}" >> $GITHUB_STEP_SUMMARY

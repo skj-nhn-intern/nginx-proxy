@@ -24,7 +24,7 @@ KR1에서 생성한 이미지를 다른 리전(KR2 등) Image API로 복사.
   export TOKEN="your-token"
   export SOURCE_IMAGE_BASE_URL="https://kr1-api-image-infrastructure.nhncloudservice.com"
   export SOURCE_IMAGE_ID="0e83ed24-7d97-483d-b36a-bcc154543bae"
-  export SOURCE_IMAGE_NAME="photo-api-20250101-120000"
+  export SOURCE_IMAGE_NAME="frontend-20250101-120000"
   export TARGET_REGION="KR2"
   python3 scripts/ci/copy_image_to_region.py
 """

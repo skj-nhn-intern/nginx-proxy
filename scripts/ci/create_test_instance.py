@@ -36,7 +36,7 @@ def main() -> None:
     flavor_id = resolve_flavor_uuid(compute_url, headers, flavor_id)
 
     root_volume_size = int(os.environ.get("NHN_ROOT_VOLUME_SIZE_GB", "20"))
-    instance_name = f"photo-api-test-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    instance_name = f"frontend-test-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     # NHN: networks는 서브넷 ID일 때 "subnet" 키 사용
     server_payload = {
         "server": {
@@ -47,7 +47,7 @@ def main() -> None:
             "key_name": keypair_name,
             "min_count": 1,
             "max_count": 1,
-            "metadata": {"purpose": "github-actions-test", "app": "photo-api"},
+            "metadata": {"purpose": "github-actions-test", "app": "frontend"},
             "block_device_mapping_v2": [
                 {
                     "source_type": "image",

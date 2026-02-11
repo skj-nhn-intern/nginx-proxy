@@ -45,7 +45,7 @@ def main() -> None:
         "Content-Type": "application/json",
     }
 
-    image_name = f"photo-api-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    image_name = f"frontend-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     image_base = _image_base_url(compute_url)
 
     # 1) Nova createImage 시도 (volume 루트 인스턴스면 NHN에서 400)
@@ -56,7 +56,7 @@ def main() -> None:
             "visibility": "shared",  # 파일 다운로드 권한 문제 해결을 위해 shared로 설정
             "metadata": {
                 "purpose": "github-actions-build",
-                "app": "photo-api",
+                "app": "frontend",
                 "git_sha": git_sha,
             },
         }

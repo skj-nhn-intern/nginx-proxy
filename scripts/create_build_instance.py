@@ -64,7 +64,7 @@ def main() -> None:
 
     # 루트 디스크 크기(GB). Linux 최소 10, 문서 예시 20
     root_volume_size = int(os.environ.get("NHN_ROOT_VOLUME_SIZE_GB", "20"))
-    instance_name = f"photo-api-build-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    instance_name = f"frontend-build-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     print(f"🚀 빌드 인스턴스 생성 중: {instance_name}")
     # NHN Cloud API: block_device_mapping_v2 필수 (https://docs.nhncloud.com/ko/Compute/Instance/ko/public-api/)
     # networks: 서브넷 ID는 "subnet" 키 사용 (문서 예시 및 GITHUB_ACTIONS_SETUP.md 기준)
@@ -77,7 +77,7 @@ def main() -> None:
             "key_name": keypair_name,
             "min_count": 1,
             "max_count": 1,
-            "metadata": {"purpose": "github-actions-build", "app": "photo-api"},
+            "metadata": {"purpose": "github-actions-build", "app": "frontend"},
             # NHN: destination_type 은 반드시 "volume". (local 이면 인스턴스 생성 400)
             "block_device_mapping_v2": [
                 {
