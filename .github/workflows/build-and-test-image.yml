@@ -43,8 +43,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          # cache 제거: cache-dependency-path(서브디렉터리) 사용 시 "paths were not resolved" 오류 방지
 
       - name: Build frontend dist
         run: |
