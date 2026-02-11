@@ -44,7 +44,6 @@ usage() {
   echo "       $0 --env-file <파일>  # 파일 내용을 export 후 .env에 병합"
   echo "       $0 --stdin           # .env 전체를 stdin으로 덮어쓴 뒤 적용"
   echo "       $0 --restart-only    # 설정 변경 없이 서비스만 재시작"
-  echo "       $0 --skip-observability-check  # Promtail/Pushgateway 필수 검사 생략 (비권장)"
   echo "       $0 --debug           # 각 명령 출력하며 실행 (오류 위치 확인용)"
   exit 0
 }
@@ -52,12 +51,6 @@ usage() {
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   usage
 fi
-
-SKIP_OBSERVABILITY_CHECK=false
-while [[ "${1:-}" == "--skip-observability-check" ]]; do
-  SKIP_OBSERVABILITY_CHECK=true
-  shift
-done
 
 # --debug: 실행되는 명령 그대로 출력 (set -x)
 if [[ "${1:-}" == "--debug" ]]; then
@@ -119,27 +112,6 @@ else
     echo "  Written env to $ENV_FILE"
   fi
   rm -f "$tmp"
-fi
-
-# Observability 필수: Promtail(로그), Pushgateway(node/nginx 메트릭) 무조건 전송
-if [[ "$SKIP_OBSERVABILITY_CHECK" != "true" ]]; then
-  if [[ -f "$ENV_FILE" ]]; then
-    set -a
-    # shellcheck source=/dev/null
-    source "$ENV_FILE" 2>/dev/null || true
-    set +a
-  fi
-  MISSING=""
-  [[ -z "${LOKI_URL:-}" ]] && MISSING="${MISSING} LOKI_URL(Promtail)"
-  [[ -z "${PROMETHEUS_PUSHGATEWAY_URL:-}" ]] && MISSING="${MISSING} PROMETHEUS_PUSHGATEWAY_URL(node/nginx메트릭)"
-  if [[ -n "$MISSING" ]]; then
-    echo "Error: Observability 전송 필수. 다음 변수를 설정하세요:${MISSING}" >&2
-    echo "  LOKI_URL=http://loki:3100  # Promtail → Loki 로그" >&2
-    echo "  PROMETHEUS_PUSHGATEWAY_URL=http://pushgateway:9091  # node_exporter/nginx 메트릭 푸시" >&2
-    echo "  생략 시: $0 --skip-observability-check (비권장)" >&2
-    exit 1
-  fi
-  echo "  Observability: LOKI_URL, PROMETHEUS_PUSHGATEWAY_URL 설정됨"
 fi
 
 echo "[2/5] backend.upstream.conf 생성..."

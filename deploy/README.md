@@ -36,13 +36,11 @@
 
 Promtail·Pushgateway·Prometheus 관련 변수는 **같은 .env**에 두고, `apply-env-and-restart.sh` 실행 시 병합·반영됩니다.
 
-**Observability 무조건 전송**: 배포 스크립트는 `LOKI_URL`, `PROMETHEUS_PUSHGATEWAY_URL`이 비어 있으면 **실패**합니다. (Promtail 로그, node_exporter/nginx 메트릭 전송 필수. 예외: `--skip-observability-check` 사용 시)
-
 | 변수 | 필수 | 설명 | 기본값 |
 |------|------|------|--------|
 | `BACKEND_UPSTREAM` | ✓ | 백엔드 주소 (IP 또는 호스트:포트) | `127.0.0.1:8000` |
-| `LOKI_URL` | ✓ | Loki URL (Promtail → 로그 전송) | - |
-| `PROMETHEUS_PUSHGATEWAY_URL` | ✓ | Pushgateway URL (node_exporter/nginx 메트릭 푸시) | - |
+| `LOKI_URL` | - | Loki URL (Promtail → 로그 전송) | - |
+| `PROMETHEUS_PUSHGATEWAY_URL` | - | Pushgateway URL (node_exporter/nginx 메트릭 푸시) | - |
 | `INSTANCE_IP` | - | 인스턴스 식별용 (메트릭/로그 라벨, 비우면 hostname -I 사용) | - |
 | `PUSHGATEWAY_JOB` | - | Pushgateway job 라벨 | `nginx-proxy` |
 | `OPT_DIR` | - | 설치 경로 | `/opt/nginx-proxy` |

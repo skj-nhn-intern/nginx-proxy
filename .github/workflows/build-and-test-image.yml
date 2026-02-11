@@ -42,22 +42,28 @@ jobs:
       - name: Set up Node (frontend build)
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          # cache 생략: frontend/package-lock.json 경로가 runner에서 없을 수 있어 캐시 단계 실패 방지
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Build frontend dist
         run: |
+          set -e
           if [ ! -f frontend/package.json ]; then
-            echo "⚠️ frontend/ 없음 — static은 빈 페이지로 둠"
-            mkdir -p frontend/dist
-            echo '<!DOCTYPE html><html><body><p>Frontend not in repo.</p></body></html>' > frontend/dist/index.html
-          else
-            cd frontend && npm ci && npm run build
-            cd ..
-            [ -d frontend/dist ] || (mkdir -p frontend/dist && echo '<!DOCTYPE html><html><body><p>Build failed.</p></body></html>' > frontend/dist/index.html)
+            echo "::error::frontend/ 없음. 이미지에 정적 프론트를 넣으려면 frontend( package.json 포함 )가 레포에 있어야 합니다."
+            exit 1
           fi
-        env:
-          VITE_API_BASE_URL: '/api'
+          cd frontend
+          npm ci --no-audit --no-fund
+          npm run build:proxy
+          cd ..
+          if [ ! -f frontend/dist/index.html ]; then
+            echo "::error::frontend 빌드 후 frontend/dist/index.html 이 없습니다."
+            exit 1
+          fi
+          echo "📁 frontend/dist (정적 배포 대상):"
+          ls -la frontend/dist/
+          [ -d frontend/dist/assets ] && ls -la frontend/dist/assets/ || true
 
       - name: Set up Python (for CI scripts)
         uses: actions/setup-python@v5
@@ -111,13 +117,16 @@ jobs:
 
       - name: Upload nginx-proxy source to build instance
         run: |
-          rsync -avz --exclude='.git' --exclude='*.md' \
+          rsync -avz --exclude='.git' --exclude='*.md' --exclude='frontend/node_modules' \
             -e "ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }}" \
             ./ ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/
+          # 정적 파일(frontend/dist)은 반드시 별도 전송 — 이미지에 포함되는 서빙 대상
+          rsync -avz -e "ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }}" \
+            frontend/dist/ ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/frontend/dist/
           echo "BACKEND_UPSTREAM=\"127.0.0.1:8000\"" | \
             ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }} \
             ubuntu@${{ steps.create_instance.outputs.instance_ip }} "cat > /tmp/nginx-proxy/.env"
-          echo "✅ 소스 업로드 완료"
+          echo "✅ 소스 및 frontend/dist 업로드 완료"
 
       - name: Download offline packages (Promtail, node_exporter, nginx-exporter)
         run: |
@@ -158,12 +167,13 @@ jobs:
           sudo rsync -a /tmp/nginx-proxy/deploy/ /opt/nginx-proxy/deploy/
           sudo rsync -a /tmp/nginx-proxy/scripts/ /opt/nginx-proxy/scripts/ 2>/dev/null || true
           sudo chmod +x /opt/nginx-proxy/deploy/*.sh /opt/nginx-proxy/scripts/*.sh 2>/dev/null || true
-          if [ -d /tmp/nginx-proxy/frontend/dist ] && [ -n "$(ls -A /tmp/nginx-proxy/frontend/dist 2>/dev/null)" ]; then
+          if [ -d /tmp/nginx-proxy/frontend/dist ] && [ -f /tmp/nginx-proxy/frontend/dist/index.html ]; then
             sudo cp -r /tmp/nginx-proxy/frontend/dist/* /opt/nginx-proxy/static/
-            echo "  Frontend static 복사 완료"
+            echo "  Frontend static 복사 완료 — /opt/nginx-proxy/static 내용:"
+            sudo ls -la /opt/nginx-proxy/static/
           else
-            echo '<!DOCTYPE html><html><body><p>Frontend not built.</p></body></html>' | sudo tee /opt/nginx-proxy/static/index.html > /dev/null
-            echo "  Frontend 없음 — placeholder index.html 사용"
+            echo "❌ /tmp/nginx-proxy/frontend/dist 또는 index.html 없음. 정적 프론트 없이 이미지를 만들 수 없습니다." >&2
+            exit 1
           fi
 
           echo "=== backend.upstream.conf 생성 ==="
