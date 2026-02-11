@@ -242,34 +242,27 @@ jobs:
 
       - name: Stop instance before creating image
         env:
-          NHN_AUTH_URL: ${{ secrets.NHN_AUTH_URL }}
-          NHN_TENANT_ID: ${{ secrets.NHN_TENANT_ID }}
-          NHN_USERNAME: ${{ secrets.NHN_USERNAME }}
-          NHN_PASSWORD: ${{ secrets.NHN_PASSWORD }}
+          TOKEN: ${{ steps.create_instance.outputs.token }}
+          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
           INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
-          NHN_REGION: ${{ env.NHN_REGION }}
         run: python3 scripts/ci/stop_instance.py
 
       - name: Create image from instance
         id: create_image
         env:
-          NHN_AUTH_URL: ${{ secrets.NHN_AUTH_URL }}
-          NHN_TENANT_ID: ${{ secrets.NHN_TENANT_ID }}
-          NHN_USERNAME: ${{ secrets.NHN_USERNAME }}
-          NHN_PASSWORD: ${{ secrets.NHN_PASSWORD }}
+          TOKEN: ${{ steps.create_instance.outputs.token }}
+          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
           INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
-          NHN_REGION: ${{ env.NHN_REGION }}
         run: python3 scripts/ci/create_image.py
 
       - name: Cleanup resources
         if: ${{ always() && github.event.inputs.skip_cleanup != 'true' }}
         env:
-          NHN_AUTH_URL: ${{ secrets.NHN_AUTH_URL }}
-          NHN_TENANT_ID: ${{ secrets.NHN_TENANT_ID }}
-          NHN_USERNAME: ${{ secrets.NHN_USERNAME }}
-          NHN_PASSWORD: ${{ secrets.NHN_PASSWORD }}
-          INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
-          NHN_REGION: ${{ env.NHN_REGION }}
+          TOKEN: ${{ steps.create_instance.outputs.token }}
+          COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
+          BUILD_INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
+          BUILD_FLOATING_IP_ID: ${{ steps.create_instance.outputs.floating_ip_id }}
+          KEYPAIR_NAME: ${{ steps.create_instance.outputs.keypair_name }}
         run: python3 scripts/ci/cleanup.py
 
       - name: Summary
