@@ -39,17 +39,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Node (frontend build)
+      - name: Set up Node (frontend 폴더 빌드)
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # cache 제거: cache-dependency-path(서브디렉터리) 사용 시 "paths were not resolved" 오류 방지
 
       - name: Build frontend dist
         run: |
           set -e
           if [ ! -f frontend/package.json ]; then
-            echo "::error::frontend/ 없음. 이미지에 정적 프론트를 넣으려면 frontend( package.json 포함 )가 레포에 있어야 합니다."
+            echo "::error::frontend/ 폴더 없음. frontend/package.json 이 있어야 합니다."
             exit 1
           fi
           cd frontend
@@ -119,7 +118,6 @@ jobs:
           rsync -avz --exclude='.git' --exclude='*.md' --exclude='frontend/node_modules' \
             -e "ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }}" \
             ./ ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/
-          # 정적 파일(frontend/dist)은 반드시 별도 전송 — 이미지에 포함되는 서빙 대상
           rsync -avz -e "ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }}" \
             frontend/dist/ ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/frontend/dist/
           echo "BACKEND_UPSTREAM=\"127.0.0.1:8000\"" | \
