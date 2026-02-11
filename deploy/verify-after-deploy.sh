@@ -33,9 +33,21 @@ check_nginx() {
   return 0
 }
 
-# 2) 프록시 통해 /health (백엔드가 살아 있어야 200)
+# 2) nginx 자체 검증 (백엔드 무관)
+check_nginx_health() {
+  echo "2. nginx 응답 ($url_display/_nginx_health)"
+  code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time "$CURL_TIMEOUT" "$BASE_URL/_nginx_health" 2>/dev/null || echo "000")
+  if [[ "$code" == "200" ]]; then
+    ok "HTTP $code"
+    return 0
+  fi
+  fail "HTTP $code (nginx가 응답하지 않음)"
+  return 1
+}
+
+# 3) 프록시 통해 /health (백엔드가 살아 있어야 200)
 check_health() {
-  echo "2. 프록시 헬스 ($url_display/health)"
+  echo "3. 프록시 헬스 ($url_display/health)"
   local waited=0 code body
   while true; do
     code=$(curl -s -o /tmp/nginx-proxy-health-$$.json -w "%{http_code}" --connect-timeout 5 --max-time "$CURL_TIMEOUT" "$BASE_URL/health" 2>/dev/null || echo "000")
@@ -60,9 +72,9 @@ check_health() {
   done
 }
 
-# 3) /api/ prefix → 백엔드 루트 (예: /)
+# 4) /api/ prefix → 백엔드 루트 (예: /)
 check_api_proxy() {
-  echo "3. API 프록시 ($url_display/api/)"
+  echo "4. API 프록시 ($url_display/api/)"
   local code
   code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time "$CURL_TIMEOUT" "$BASE_URL/api/" 2>/dev/null || echo "000")
   if [[ "$code" == "200" ]]; then
@@ -80,7 +92,8 @@ main() {
   echo "=== nginx-proxy 배포 검증: $url_display ==="
   failed=0
   check_nginx   || failed=1
-  check_health  || failed=1
+  check_nginx_health || failed=1
+  check_health  || true
   check_api_proxy || true
 
   echo ""

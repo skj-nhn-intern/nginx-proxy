@@ -198,13 +198,11 @@ jobs:
       - name: Verify nginx before image creation
         run: |
           INSTANCE_IP="${{ steps.create_instance.outputs.instance_ip }}"
-          code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://${INSTANCE_IP}:80/health" || echo "000")
+          code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://${INSTANCE_IP}:80/_nginx_health" || echo "000")
           if [[ "$code" == "200" ]]; then
-            echo "✅ /health 200"
-          elif [[ "$code" == "502" || "$code" == "503" ]]; then
-            echo "✅ /health $code (nginx 동작 중)"
+            echo "✅ nginx 응답 200 (/_nginx_health, 백엔드 무관)"
           else
-            echo "❌ /health HTTP $code"; exit 1
+            echo "❌ /_nginx_health HTTP $code"; exit 1
           fi
 
       - name: Prepare image for first-boot SSH (cloud-init clean)
@@ -253,9 +251,9 @@ jobs:
           attempt=0
           while [ $attempt -lt $max_attempts ]; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
-              "http://${{ steps.test_instance.outputs.test_instance_ip }}:80/health" || echo "000")
-            if [[ "$code" == "200" || "$code" == "502" || "$code" == "503" ]]; then
-              echo "✅ nginx 프록시 응답 HTTP $code"; exit 0
+              "http://${{ steps.test_instance.outputs.test_instance_ip }}:80/_nginx_health" || echo "000")
+            if [[ "$code" == "200" ]]; then
+              echo "✅ nginx 응답 200 (/_nginx_health)"; exit 0
             fi
             attempt=$((attempt + 1)); echo "  시도 $attempt/$max_attempts: HTTP $code"; sleep 10
           done
