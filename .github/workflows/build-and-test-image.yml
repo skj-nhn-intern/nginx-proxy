@@ -39,6 +39,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 루트에 frontend/ 있음(단일 레포) vs nginx-proxy/frontend/ 있음(상위 레포에서 실행) 둘 다 지원
+      - name: Find nginx-proxy root (frontend 폴더 위치)
+        id: root
+        run: |
+          if [ -f frontend/package.json ]; then
+            echo "dir=." >> $GITHUB_OUTPUT
+            echo "PROJECT_ROOT=." >> $GITHUB_ENV
+          elif [ -f nginx-proxy/frontend/package.json ]; then
+            echo "dir=nginx-proxy" >> $GITHUB_OUTPUT
+            echo "PROJECT_ROOT=nginx-proxy" >> $GITHUB_ENV
+          else
+            echo "::error::frontend/package.json 을 찾을 수 없음. 루트 또는 nginx-proxy/ 아래에 frontend/ 가 있어야 합니다."
+            exit 1
+          fi
+
       - name: Set up Node (frontend 폴더 빌드)
         uses: actions/setup-node@v4
         with:
@@ -47,21 +62,18 @@ jobs:
       - name: Build frontend dist
         run: |
           set -e
-          if [ ! -f frontend/package.json ]; then
-            echo "::error::frontend/ 폴더 없음. frontend/package.json 이 있어야 합니다."
-            exit 1
-          fi
-          cd frontend
+          ROOT="${{ env.PROJECT_ROOT }}"
+          cd "$ROOT/frontend"
           npm ci --no-audit --no-fund
           npm run build:proxy
-          cd ..
-          if [ ! -f frontend/dist/index.html ]; then
-            echo "::error::frontend 빌드 후 frontend/dist/index.html 이 없습니다."
+          cd "$GITHUB_WORKSPACE"
+          if [ ! -f "$ROOT/frontend/dist/index.html" ]; then
+            echo "::error::frontend 빌드 후 $ROOT/frontend/dist/index.html 이 없습니다."
             exit 1
           fi
           echo "📁 frontend/dist (정적 배포 대상):"
-          ls -la frontend/dist/
-          [ -d frontend/dist/assets ] && ls -la frontend/dist/assets/ || true
+          ls -la "$ROOT/frontend/dist/"
+          [ -d "$ROOT/frontend/dist/assets" ] && ls -la "$ROOT/frontend/dist/assets/" || true
 
       - name: Set up Python (for CI scripts)
         uses: actions/setup-python@v5
@@ -93,7 +105,7 @@ jobs:
           NHN_NETWORK_ID: ${{ env.NHN_NETWORK_ID }}
           NHN_REGION: ${{ env.NHN_REGION }}
           SSH_PUBLIC_KEY: ${{ steps.ssh_key.outputs.public_key_path }}
-        run: python3 scripts/ci/create_build_instance.py
+        run: cd ${{ env.PROJECT_ROOT }} && python3 scripts/ci/create_build_instance.py
 
       - name: Wait for SSH to be ready
         run: |
@@ -115,11 +127,12 @@ jobs:
 
       - name: Upload nginx-proxy source to build instance
         run: |
+          ROOT="${{ env.PROJECT_ROOT }}"
           rsync -avz --exclude='.git' --exclude='*.md' --exclude='frontend/node_modules' \
             -e "ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }}" \
-            ./ ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/
+            "$ROOT/" ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/
           rsync -avz -e "ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }}" \
-            frontend/dist/ ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/frontend/dist/
+            "$ROOT/frontend/dist/" ubuntu@${{ steps.create_instance.outputs.instance_ip }}:/tmp/nginx-proxy/frontend/dist/
           echo "BACKEND_UPSTREAM=\"127.0.0.1:8000\"" | \
             ssh -o StrictHostKeyChecking=no -i ${{ steps.ssh_key.outputs.private_key_path }} \
             ubuntu@${{ steps.create_instance.outputs.instance_ip }} "cat > /tmp/nginx-proxy/.env"
@@ -252,7 +265,7 @@ jobs:
           TOKEN: ${{ steps.create_instance.outputs.token }}
           COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
           INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
-        run: python3 scripts/ci/stop_instance.py
+        run: cd ${{ env.PROJECT_ROOT }} && python3 scripts/ci/stop_instance.py
 
       - name: Create image from instance
         id: create_image
@@ -260,7 +273,7 @@ jobs:
           TOKEN: ${{ steps.create_instance.outputs.token }}
           COMPUTE_URL: ${{ steps.create_instance.outputs.compute_url }}
           INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
-        run: python3 scripts/ci/create_image.py
+        run: cd ${{ env.PROJECT_ROOT }} && python3 scripts/ci/create_image.py
 
       - name: Cleanup resources
         if: ${{ always() && github.event.inputs.skip_cleanup != 'true' }}
@@ -270,7 +283,7 @@ jobs:
           BUILD_INSTANCE_ID: ${{ steps.create_instance.outputs.instance_id }}
           BUILD_FLOATING_IP_ID: ${{ steps.create_instance.outputs.floating_ip_id }}
           KEYPAIR_NAME: ${{ steps.create_instance.outputs.keypair_name }}
-        run: python3 scripts/ci/cleanup.py
+        run: cd ${{ env.PROJECT_ROOT }} && python3 scripts/ci/cleanup.py
 
       - name: Summary
         if: always()
