@@ -217,14 +217,18 @@ export function AlbumProvider({ children }) {
       throw new Error('파일 크기는 10MB를 초과할 수 없습니다.');
     }
 
-    // 파일 형식 검증
+    // 파일 형식 검증 및 Content-Type 고정 (presigned 서명과 PUT 헤더가 반드시 동일해야 함)
     const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic'];
-    if (!allowedTypes.includes(file.type)) {
+    const extToType = { jpeg: 'image/jpeg', jpg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', heic: 'image/heic' };
+    const contentType = allowedTypes.includes(file.type)
+      ? file.type
+      : (extToType[file.name.split('.').pop()?.toLowerCase()] || 'application/octet-stream');
+    if (!allowedTypes.includes(contentType)) {
       throw new Error('지원하지 않는 파일 형식입니다. (지원: JPEG, PNG, GIF, WebP, HEIC)');
     }
 
     try {
-      // 1. Presigned URL 발급
+      // 1. Presigned URL 발급 (content_type과 PUT 시 Content-Type을 동일하게 사용해야 Signature 일치)
       if (onProgress) onProgress(10); // 10% - Presigned URL 요청 중
       
       const presignedResponse = await fetch(apiEndpoints.photosPresignedUrl(), {
@@ -236,7 +240,7 @@ export function AlbumProvider({ children }) {
         body: JSON.stringify({
           album_id: parseInt(albumId),
           filename: file.name,
-          content_type: file.type,
+          content_type: contentType,
           file_size: file.size,
           title: imageData.name || null,
           description: imageData.description || null,
@@ -280,7 +284,7 @@ export function AlbumProvider({ children }) {
         });
 
         xhr.open('PUT', presignedData.upload_url);
-        xhr.setRequestHeader('Content-Type', file.type);
+        xhr.setRequestHeader('Content-Type', contentType);
         xhr.send(file);
       });
 

@@ -34,6 +34,8 @@ fi
 
 # .env에 없거나 비어 있으면 상단 DEFAULT_* 변수 사용
 BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-$DEFAULT_BACKEND}"
+# 127.0.0.1:8000은 CI/이미지 빌드용. 실제 배포 시에는 기본 백엔드(api-lb)로 덮어쓴다.
+[[ "${BACKEND_UPSTREAM}" == "127.0.0.1:8000" ]] && BACKEND_UPSTREAM="$DEFAULT_BACKEND"
 LOKI_URL="${LOKI_URL:-$DEFAULT_LOKI_URL}"
 PROMETHEUS_PUSHGATEWAY_URL="${PROMETHEUS_PUSHGATEWAY_URL:-$DEFAULT_PUSHGATEWAY_URL}"
 INSTANCE_IP="${INSTANCE_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
@@ -43,8 +45,9 @@ usage() {
   echo "Usage: export BACKEND_UPSTREAM=ip:port [LOKI_URL=...] ... && $0"
   echo "       $0 --env-file <파일>  # 파일 내용을 export 후 .env에 병합"
   echo "       $0 --stdin           # .env 전체를 stdin으로 덮어쓴 뒤 적용"
-  echo "       $0 --restart-only    # 설정 변경 없이 서비스만 재시작"
-  echo "       $0 --debug           # 각 명령 출력하며 실행 (오류 위치 확인용)"
+  echo "       $0 --restart-only   # 설정 변경 없이 서비스만 재시작"
+  echo "       $0 --check-backend  # 백엔드(api-lb) 연결만 테스트 (502 원인 확인용)"
+  echo "       $0 --debug          # 각 명령 출력하며 실행 (오류 위치 확인용)"
   exit 0
 }
 
@@ -77,6 +80,21 @@ if [[ "${1:-}" == "--restart-only" ]]; then
   echo "Reload only (no upstream rewrite)"
   sudo nginx -t && sudo systemctl reload nginx
   echo "Reloaded nginx"
+  exit 0
+fi
+
+if [[ "${1:-}" == "--check-backend" ]]; then
+  echo "=== 백엔드 연결 점검 (BACKEND_UPSTREAM=$BACKEND_UPSTREAM) ==="
+  echo "  적용된 설정: $(sudo cat "$BACKEND_CONF" 2>/dev/null || echo '없음')"
+  code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "http://${BACKEND_UPSTREAM}/health" 2>/dev/null || echo "000")
+  if [[ "$code" == "200" ]]; then
+    echo "  curl http://${BACKEND_UPSTREAM}/health → HTTP $code (정상)"
+    echo "  → 이 주소로 연결되는데 502면 nginx 캐시/재시작 또는 리스너 포트 재확인."
+  else
+    echo "  curl http://${BACKEND_UPSTREAM}/health → HTTP $code (실패)"
+    echo "  → 연결 거부/타임아웃이면: BACKEND_UPSTREAM이 api-lb VIP:리스너포트인지, 보안 그룹(nginx-proxy→api-lb) 허용인지 확인."
+    exit 1
+  fi
   exit 0
 fi
 
