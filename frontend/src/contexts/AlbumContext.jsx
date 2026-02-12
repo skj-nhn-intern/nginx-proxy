@@ -284,7 +284,8 @@ export function AlbumProvider({ children }) {
         });
 
         xhr.open('PUT', presignedData.upload_url);
-        xhr.setRequestHeader('Content-Type', contentType);
+        const putContentType = (presignedData.upload_headers && presignedData.upload_headers['Content-Type']) || contentType;
+        xhr.setRequestHeader('Content-Type', putContentType);
         xhr.send(file);
       });
 

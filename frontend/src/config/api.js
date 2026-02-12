@@ -39,13 +39,38 @@ const getApiBaseUrl = () => {
 export const API_BASE_URL = getApiBaseUrl();
 
 /**
- * 이미지 URL 반환. 상대 경로(백엔드 프록시)면 API_BASE_URL을 붙임.
- * @param {string} url - API에서 받은 photo.url (절대 URL 또는 /photos/.../image?t=...)
+ * 이미지 요청 URL 반환. 상대 경로(백엔드 프록시)면 API_BASE_URL을 붙임.
+ * @param {string} url - API에서 받은 photo.url (절대 URL 또는 /photos/.../image)
  */
 export function getImageUrl(url) {
   if (!url) return '';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
   return `${API_BASE_URL}${url}`;
+}
+
+/**
+ * JWT가 필요한 이미지 경로인지 여부. /photos/{id}/image 등은 인증 필요.
+ * 공유 앨범(/share/...)은 인증 불필요.
+ */
+export function isAuthRequiredPhotoUrl(url) {
+  if (!url || url.startsWith('http://') || url.startsWith('https://')) return false;
+  return url.startsWith('/photos/');
+}
+
+/**
+ * JWT가 필요한 이미지를 fetch 후 blob URL로 반환. 호출부에서 사용 후 revoke 필요.
+ * @param {string} url - API에서 받은 photo.url (/photos/...)
+ * @param {string} token - access_token
+ * @returns {Promise<string>} blob URL (사용 후 URL.revokeObjectURL 호출 권장)
+ */
+export async function fetchPhotoImageAsBlobUrl(url, token) {
+  const fullUrl = getImageUrl(url);
+  const response = await fetch(fullUrl, {
+    headers: { 'Authorization': `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error('이미지를 불러올 수 없습니다.');
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
 }
 
 /**

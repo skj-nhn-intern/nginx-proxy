@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { apiEndpoints, getImageUrl } from '../../config/api';
+import { apiEndpoints, getImageUrl, isAuthRequiredPhotoUrl } from '../../config/api';
+import PhotoImage from './PhotoImage';
 import './ImageGrid.css';
 
 function ImageGrid({ images, onImageClick, onDeleteImage }) {
@@ -31,19 +32,22 @@ function ImageGrid({ images, onImageClick, onDeleteImage }) {
       // CDN URL에서 파일 다운로드
       // Auth Token이 이미 URL에 ?token=... 형식으로 포함되어 있음
       const imageRequestUrl = getImageUrl(image.url);
+      const token = localStorage.getItem('access_token');
+      const headers = isAuthRequiredPhotoUrl(image.url) && token
+        ? { 'Authorization': `Bearer ${token}` }
+        : {};
       const response = await fetch(imageRequestUrl, {
         method: 'GET',
         mode: 'cors',
+        headers,
       });
 
       if (!response.ok) {
-        // CDN 다운로드 실패 시 백엔드 엔드포인트로 fallback
-        const token = localStorage.getItem('access_token');
+        // 인증 필요 경로 실패 시 백엔드 download 엔드포인트로 fallback
+        const fallbackToken = localStorage.getItem('access_token');
         const fallbackResponse = await fetch(apiEndpoints.photo(image.id) + '/download', {
           method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
+          headers: fallbackToken ? { 'Authorization': `Bearer ${fallbackToken}` } : {},
         });
 
         if (!fallbackResponse.ok) {
@@ -137,8 +141,8 @@ function ImageGrid({ images, onImageClick, onDeleteImage }) {
             onClick={() => onImageClick(image)}
           >
             <div className="image-wrapper">
-              <img 
-                src={getImageUrl(image.url)} 
+              <PhotoImage
+                url={image.url}
                 alt={image.name}
                 loading="lazy"
               />
