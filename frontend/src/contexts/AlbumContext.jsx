@@ -255,7 +255,7 @@ export function AlbumProvider({ children }) {
       const presignedData = await presignedResponse.json();
       if (onProgress) onProgress(20); // 20% - Presigned URL 발급 완료
 
-      // 2. Object Storage에 직접 업로드 (XMLHttpRequest로 진행률 추적)
+      // 2. Object Storage에 직접 업로드 (POST + multipart/form-data → CORS simple request, OPTIONS 없음)
       const uploadedUrl = await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
 
@@ -283,10 +283,19 @@ export function AlbumProvider({ children }) {
           reject(new Error('파일 업로드가 취소되었습니다.'));
         });
 
-        xhr.open('PUT', presignedData.upload_url);
-        const putContentType = (presignedData.upload_headers && presignedData.upload_headers['Content-Type']) || contentType;
-        xhr.setRequestHeader('Content-Type', putContentType);
-        xhr.send(file);
+        // Presigned POST: FormData에 서명 필드 추가 후 파일을 마지막에 추가
+        // POST + multipart/form-data = CORS "simple request" → OPTIONS preflight 없음
+        const formData = new FormData();
+        if (presignedData.upload_fields) {
+          Object.entries(presignedData.upload_fields).forEach(([key, value]) => {
+            formData.append(key, value);
+          });
+        }
+        formData.append('file', file); // 반드시 마지막
+
+        xhr.open('POST', presignedData.upload_url);
+        // ⚠️ Content-Type 헤더 직접 설정 금지 — 브라우저가 multipart/form-data boundary 자동 설정
+        xhr.send(formData);
       });
 
       if (onProgress) onProgress(90); // 90% - 파일 업로드 완료
