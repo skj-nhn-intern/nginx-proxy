@@ -255,29 +255,39 @@ export function AlbumProvider({ children }) {
       const presignedData = await presignedResponse.json();
       if (onProgress) onProgress(20); // 20% - Presigned URL 발급 완료
 
-      // 2. Object Storage에 직접 업로드 (fetch + POST + multipart/form-data)
-      // ⚠️ XHR의 xhr.upload.addEventListener를 사용하면 브라우저가 무조건 OPTIONS preflight를 보냄.
-      //    fetch()는 upload listener가 없으므로 simple request로 처리되어 OPTIONS 없음.
-      if (onProgress) onProgress(25); // 업로드 시작
+      // 2. Object Storage에 직접 업로드 (Swift Temp URL + XHR PUT)
+      // Swift API 경로 사용 → 컨테이너 CORS 설정이 OPTIONS preflight 처리
+      const uploadedUrl = await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
 
-      const formData = new FormData();
-      if (presignedData.upload_fields) {
-        Object.entries(presignedData.upload_fields).forEach(([key, value]) => {
-          formData.append(key, value);
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable && onProgress) {
+            const percentComplete = 20 + Math.round((event.loaded / event.total) * 70);
+            onProgress(percentComplete);
+          }
         });
-      }
-      formData.append('file', file); // 반드시 마지막
 
-      // POST + multipart/form-data + 커스텀 헤더 없음 = CORS "simple request" → OPTIONS 없음
-      const uploadResponse = await fetch(presignedData.upload_url, {
-        method: 'POST',
-        body: formData,
-        // ⚠️ Content-Type 헤더 직접 설정 금지 — 브라우저가 multipart/form-data boundary 자동 설정
+        xhr.addEventListener('load', () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(presignedData.upload_url);
+          } else {
+            reject(new Error('파일 업로드에 실패했습니다.'));
+          }
+        });
+
+        xhr.addEventListener('error', () => {
+          reject(new Error('파일 업로드 중 네트워크 오류가 발생했습니다.'));
+        });
+
+        xhr.addEventListener('abort', () => {
+          reject(new Error('파일 업로드가 취소되었습니다.'));
+        });
+
+        xhr.open('PUT', presignedData.upload_url);
+        const putContentType = (presignedData.upload_headers && presignedData.upload_headers['Content-Type']) || contentType;
+        xhr.setRequestHeader('Content-Type', putContentType);
+        xhr.send(file);
       });
-
-      if (!uploadResponse.ok && uploadResponse.status !== 204) {
-        throw new Error('파일 업로드에 실패했습니다.');
-      }
 
       if (onProgress) onProgress(90); // 90% - 파일 업로드 완료
 
