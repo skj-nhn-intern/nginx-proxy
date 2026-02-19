@@ -1,5 +1,10 @@
 # Promtail — nginx-proxy 로그 전송 (Loki)
 # LOKI_URL, INSTANCE_IP: /opt/nginx-proxy/.env 또는 systemd EnvironmentFile
+#
+# 최적화: 레이블은 app, instance, log_type 만 사용 (카디널리티 최소화).
+# 로그 본문(Line): JSON 그대로 전송 — bytes_sent, request_id, remote_addr,
+#   upstream_response_time, request_uri, uri, status, method, time, service 등
+#   LogQL에서 | json | unwrap 로 필드 접근.
 
 server:
   http_listen_port: 9080
@@ -20,32 +25,31 @@ clients:
     timeout: 30s
 
 scrape_configs:
+  # nginx access: 로그 본문 = JSON 한 줄 (모든 상세 정보), 레이블 = app, instance, log_type
   - job_name: nginx-proxy-access
     static_configs:
       - targets: [localhost]
         labels:
-          job: nginx-proxy
           app: nginx-proxy
-          log_type: access
           instance: ${INSTANCE_IP}
+          log_type: access
           __path__: /var/log/nginx/nginx-proxy-access.log
     pipeline_stages:
-      - regex:
-          expression: '^(?P<remote_addr>\S+) \S+ \S+ \[(?P<time_local>[^\]]+)\] "(?P<method>\S+) (?P<uri>\S+) \S+" (?P<status>\d+) (?P<body_bytes_sent>\d+) "(?P<http_referer>[^"]*)" "(?P<http_user_agent>[^"]*)"'
-      - labels:
-          status: status
+      - json:
+          expressions:
+            time: time
       - timestamp:
-          source: time_local
-          format: '02/Jan/2006:15:04:05 -0700'
+          source: time
+          format: RFC3339
 
+  # nginx error: 레이블만 app, instance, log_type (본문은 원문 그대로)
   - job_name: nginx-proxy-error
     static_configs:
       - targets: [localhost]
         labels:
-          job: nginx-proxy
           app: nginx-proxy
-          log_type: error
           instance: ${INSTANCE_IP}
+          log_type: error
           __path__: /var/log/nginx/nginx-proxy-error.log
 
   - job_name: journal
@@ -56,6 +60,7 @@ scrape_configs:
       labels:
         job: systemd
         instance: ${INSTANCE_IP}
+        instance_ip: ${INSTANCE_IP}
     relabel_configs:
       - source_labels: ['__journal__systemd_unit']
         regex: '(nginx|promtail|node_exporter|nginx-exporter|pushgateway-push)\.service'
