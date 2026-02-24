@@ -191,6 +191,9 @@ jobs:
             /opt/nginx-proxy/conf/backend.upstream.conf.template | \
             sudo tee /opt/nginx-proxy/conf.d/backend.upstream.conf > /dev/null
 
+          echo "=== real_ip_from.conf 생성 (CI에는 LB 미설정) ==="
+          echo "# REAL_IP_FROM not set" | sudo tee /opt/nginx-proxy/conf.d/real_ip_from.conf > /dev/null
+
           echo "=== nginx 설정 적용 ==="
           sudo cp /opt/nginx-proxy/conf/nginx-proxy.conf /etc/nginx/conf.d/nginx-proxy.conf
           sudo rm -f /etc/nginx/sites-enabled/default
