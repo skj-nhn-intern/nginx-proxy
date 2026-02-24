@@ -18,6 +18,8 @@ DEFAULT_PUSHGATEWAY_URL="${DEFAULT_PUSHGATEWAY_URL:-http://192.168.4.73:9091}"
 # .env에 쓸 수 있는 변수 (export 후 실행 시 병합됨)
 ENV_KEYS=(
   BACKEND_UPSTREAM
+  REAL_IP_FROM
+  REGION
   LOKI_URL
   PROMETHEUS_PUSHGATEWAY_URL
   INSTANCE_IP
@@ -39,7 +41,7 @@ BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-$DEFAULT_BACKEND}"
 LOKI_URL="${LOKI_URL:-$DEFAULT_LOKI_URL}"
 PROMETHEUS_PUSHGATEWAY_URL="${PROMETHEUS_PUSHGATEWAY_URL:-$DEFAULT_PUSHGATEWAY_URL}"
 INSTANCE_IP="${INSTANCE_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
-export BACKEND_UPSTREAM LOKI_URL PROMETHEUS_PUSHGATEWAY_URL INSTANCE_IP
+export BACKEND_UPSTREAM LOKI_URL PROMETHEUS_PUSHGATEWAY_URL INSTANCE_IP REGION
 
 usage() {
   echo "Usage: export BACKEND_UPSTREAM=ip:port [LOKI_URL=...] ... && $0"
@@ -153,6 +155,20 @@ else
   # 템플릿 없으면 최소 upstream만 작성
   echo "upstream photo_api_backend { server $BACKEND_UPSTREAM; keepalive 32; }" | sudo tee "$BACKEND_CONF" > /dev/null
   echo "  Written $BACKEND_CONF (no template)"
+fi
+
+# real_ip_from.conf: LB IP는 보안상 저장소에 없고 .env(REAL_IP_FROM)로만 주입
+REAL_IP_CONF="${CONF_DIR}/real_ip_from.conf"
+if [[ -n "${REAL_IP_FROM:-}" ]]; then
+  if [[ "$REAL_IP_FROM" == *"/"* ]]; then
+    printf '%s\n' "set_real_ip_from ${REAL_IP_FROM};" | sudo tee "$REAL_IP_CONF" > /dev/null
+  else
+    printf '%s\n' "set_real_ip_from ${REAL_IP_FROM}/32;" | sudo tee "$REAL_IP_CONF" > /dev/null
+  fi
+  echo "  Written $REAL_IP_CONF (REAL_IP_FROM set)"
+else
+  echo "# REAL_IP_FROM not set" | sudo tee "$REAL_IP_CONF" > /dev/null
+  echo "  Written $REAL_IP_CONF (empty)"
 fi
 
 echo "[3/5] nginx 설정 검사 및 reload..."

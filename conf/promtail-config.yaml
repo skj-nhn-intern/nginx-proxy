@@ -1,7 +1,7 @@
 # Promtail — nginx-proxy 로그 전송 (Loki)
-# LOKI_URL, INSTANCE_IP: /opt/nginx-proxy/.env 또는 systemd EnvironmentFile
+# LOKI_URL, INSTANCE_IP, REGION: /opt/nginx-proxy/.env 또는 systemd EnvironmentFile
 #
-# 최적화: 레이블은 app, instance, log_type 만 사용 (카디널리티 최소화).
+# 레이블: app, instance, log_type, region (region은 배포 시 REGION 환경변수로 주입).
 # 로그 본문(Line): JSON 그대로 전송 — bytes_sent, request_id, remote_addr,
 #   upstream_response_time, request_uri, uri, status, method, time, service 등
 #   LogQL에서 | json | unwrap 로 필드 접근.
@@ -33,6 +33,7 @@ scrape_configs:
           app: nginx-proxy
           instance: ${INSTANCE_IP}
           log_type: access
+          region: ${REGION}
           __path__: /var/log/nginx/nginx-proxy-access.log
     pipeline_stages:
       - json:
@@ -50,6 +51,7 @@ scrape_configs:
           app: nginx-proxy
           instance: ${INSTANCE_IP}
           log_type: error
+          region: ${REGION}
           __path__: /var/log/nginx/nginx-proxy-error.log
 
   - job_name: journal
@@ -61,6 +63,7 @@ scrape_configs:
         job: systemd
         instance: ${INSTANCE_IP}
         instance_ip: ${INSTANCE_IP}
+        region: ${REGION}
     relabel_configs:
       - source_labels: ['__journal__systemd_unit']
         regex: '(nginx|promtail|node_exporter|nginx-exporter|pushgateway-push)\.service'
