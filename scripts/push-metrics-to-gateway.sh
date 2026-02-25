@@ -4,6 +4,9 @@
 # pushgateway-push.timer에서 30초마다 호출.
 # 환경변수: PROMETHEUS_PUSHGATEWAY_URL (필수), INSTANCE_IP, REGION (선택, 배포 시 설정)
 #
+# nginx-exporter 생존: node_exporter의 systemd collector로 node_systemd_unit_state 노출됨.
+# 별도 스크립트 없이 위 메트릭 푸시만으로 시간별 생존 파악 가능.
+#
 set -euo pipefail
 
 ENV_FILE="${ENV_FILE:-/opt/nginx-proxy/.env}"

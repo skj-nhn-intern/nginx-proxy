@@ -7,7 +7,8 @@ Wants=network-online.target
 Type=simple
 User=node-exporter
 Group=node-exporter
-ExecStart=/opt/node_exporter/node_exporter --web.listen-address=:9100
+# systemd collector: nginx, nginx-exporter, node_exporter 서비스 생존 여부를 node_systemd_unit_state 로 노출
+ExecStart=/opt/node_exporter/node_exporter --web.listen-address=:9100 --collector.systemd --collector.systemd.unit-include="(nginx|nginx-exporter|node_exporter)\\.service"
 Restart=on-failure
 RestartSec=5
 
