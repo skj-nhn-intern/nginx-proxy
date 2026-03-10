@@ -191,7 +191,12 @@ def resolve_image_uuid(region: str, token: str, image_ref: str) -> str:
             if name_lower in (img.get("name") or "").lower()
         ]
     if not candidates:
-        print(f"❌ 이미지를 찾을 수 없음: {image_ref}", file=sys.stderr)
+        print(
+            f"❌ 이미지를 찾을 수 없음 (리전={region_lower}, Public 이미지 수={len(images)}). "
+            "NHN_IMAGE_NAME을 해당 리전의 Public 이미지 이름과 정확히 맞추세요. "
+            "NHN Cloud 콘솔 > Compute > 이미지에서 이름 확인.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     # 여러 개면 created_at 최신 순 (없으면 맨 뒤)
     candidates.sort(key=lambda img: img.get("created_at") or "", reverse=True)
