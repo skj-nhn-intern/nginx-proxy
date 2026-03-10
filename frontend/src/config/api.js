@@ -118,6 +118,9 @@ export const apiRequest = async (url, options = {}) => {
   });
 
   if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error('요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.');
+    }
     const error = await response.json().catch(() => ({ detail: '요청 처리 중 오류가 발생했습니다.' }));
     // 내부 정보 노출 방지: 사용자 친화적인 메시지만 반환
     const userFriendlyMessage = error.detail || '요청 처리 중 오류가 발생했습니다.';
